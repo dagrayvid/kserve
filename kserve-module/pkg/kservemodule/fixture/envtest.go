@@ -8,6 +8,7 @@ import (
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
+	securityv1 "github.com/openshift/api/security/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -42,6 +43,7 @@ func SetupTestEnv(ctx context.Context) *TestEnv {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(platformv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(apiextensionsv1.AddToScheme(scheme))
+	utilruntime.Must(securityv1.AddToScheme(scheme))
 
 	env := &envtest.Environment{
 		CRDDirectoryPaths:     []string{filepath.Join(ProjectRoot(), "config", "crd")},
@@ -61,6 +63,8 @@ func SetupTestEnv(ctx context.Context) *TestEnv {
 		LeaderElection: false,
 	})
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+
+	CreateCRD(ctx, cli, "operators.coreos.com", "v1alpha1", "Subscription", apiextensionsv1.NamespaceScoped)
 
 	workDir := ginkgo.GinkgoT().TempDir()
 	WriteMinimalManifests(workDir)
@@ -106,6 +110,8 @@ metadata:
   namespace: opendatahub
 data:
   ingress: "{}"
+  service: "{}"
+  oauthProxy: '{"image":"registry.example.com/oauth-proxy:latest","memoryRequest":"64Mi","memoryLimit":"128Mi","cpuRequest":"100m","cpuLimit":"200m"}'
 `
 	modelCtrlManifest := `apiVersion: v1
 kind: ConfigMap
@@ -115,9 +121,49 @@ metadata:
 data:
   enabled: "true"
 `
-	writeKustomizeDir(filepath.Join(workDir, "kserve", "overlays", "odh"), kserveManifest)
-	writeKustomizeDir(filepath.Join(workDir, "kserve", "overlays", "odh-xks"), kserveManifest)
-	writeKustomizeDir(filepath.Join(workDir, "odh-model-controller", "base"), modelCtrlManifest)
+	wvaManifest := `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: workload-variant-autoscaler-controller-manager
+  namespace: opendatahub
+spec:
+  selector:
+    matchLabels:
+      control-plane: workload-variant-autoscaler-controller-manager
+  template:
+    metadata:
+      labels:
+        control-plane: workload-variant-autoscaler-controller-manager
+    spec:
+      containers:
+      - name: manager
+        image: ghcr.io/llm-d/llm-d-workload-variant-autoscaler:latest
+`
+	observabilityManifest := `apiVersion: perses.dev/v1alpha2
+kind: PersesDashboard
+metadata:
+  name: dashboard-2-llm-d-traffic-admin
+spec:
+  config:
+    display:
+      name: LLM Traffic
+    duration: 1h
+    panels: {}
+    layouts: []
+`
+	consoleDashboardsManifest := `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: model-serving-llms-cluster-health
+data:
+  model-serving-llms-cluster-health-odc.json: "{}"
+`
+	writeKustomizeDir(filepath.Join(workDir, kservemodule.KserveComponentName, kservemodule.KserveManifestSourcePath), kserveManifest)
+	writeKustomizeDir(filepath.Join(workDir, kservemodule.KserveComponentName, kservemodule.KserveManifestSourcePathXKS), kserveManifest)
+	writeKustomizeDir(filepath.Join(workDir, kservemodule.KserveComponentName, kservemodule.ObservabilityManifestSourcePath), observabilityManifest)
+	writeKustomizeDir(filepath.Join(workDir, kservemodule.KserveComponentName, kservemodule.ConsoleDashboardsManifestSourcePath), consoleDashboardsManifest)
+	writeKustomizeDir(filepath.Join(workDir, kservemodule.OdhModelControllerComponentName, kservemodule.ModelControllerSourcePath), modelCtrlManifest)
+	writeKustomizeDir(filepath.Join(workDir, kservemodule.WVAComponentName, kservemodule.WVAManifestSourcePathOCP), wvaManifest)
 }
 
 func writeKustomizeDir(dir, manifest string) {

@@ -2,29 +2,46 @@ package kservemodule
 
 const (
 	// Component names
-	kserveComponentName             = "kserve"
-	odhModelControllerComponentName = "odh-model-controller"
+	KserveComponentName             = "kserve"
+	OdhModelControllerComponentName = "modelcontroller"
+	WVAComponentName                = "wva"
+	ModelCacheComponentName         = "modelcache"
+	ObservabilityComponentName      = "observability"
+	ConsoleDashboardsComponentName  = "console-dashboards"
 
 	// Manifest source paths
-	kserveManifestSourcePath    = "overlays/odh"
-	kserveManifestSourcePathXKS = "overlays/odh-xks"
-	modelControllerSourcePath   = "base"
+	KserveManifestSourcePath        = "overlays/odh"
+	KserveManifestSourcePathXKS     = "overlays/odh-xks"
+	ModelCacheManifestSourcePath    = "overlays/odh-modelcache"
+	ModelControllerSourcePath       = "base"
+	WVAManifestSourcePathOCP        = "overlays/namespace-scoped/openshift"
+	ObservabilityManifestSourcePath      = "monitoring/llmisvc/dashboards"
+	ConsoleDashboardsManifestSourcePath = "monitoring/llmisvc/dashboards-odc"
 
 	// Deployment names
-	kserveControllerDeployment  = "kserve-controller-manager"
-	llmISVCControllerDeployment = "llmisvc-controller-manager"
-	//TO-DO
-	// localmodelControllerDeployment = "kserve-localmodel-controller-manager"
-	odhModelControllerDeployment = "odh-model-controller"
+	kserveControllerDeployment     = "kserve-controller-manager"
+	llmISVCControllerDeployment    = "llmisvc-controller-manager"
+	localmodelControllerDeployment = "kserve-localmodel-controller-manager"
+	odhModelControllerDeployment   = "odh-model-controller"
+	wvaControllerDeployment        = "workload-variant-autoscaler-controller-manager"
+
+	// Console dashboards target namespace
+	consoleDashboardsNamespace = "openshift-config-managed"
 
 	// SSA field manager
 	fieldOwner = "kserve-module-controller"
+
+	// Platform version ConfigMap
+	platformVersionConfigMap    = "odh-kserve-config"
+	platformVersionConfigMapKey = "platformVersion"
 
 	// ConfigMap keys
 	kserveConfigMapName     = "inferenceservice-config"
 	ingressConfigKeyName    = "ingress"
 	serviceConfigKeyName    = "service"
 	configHashAnnotationKey = "kserve-module/config-hash"
+	oauthProxyConfigKeyName = "oauthProxy"
+	openshiftConfigKeyName  = "openshiftConfig"
 
 	// LLMInferenceServiceConfig versioning
 	wellKnownAnnotationKey   = "serving.kserve.io/well-known-config"
@@ -32,6 +49,13 @@ const (
 	llmISVCConfigPrefixEnv   = "LLM_INFERENCE_SERVICE_CONFIG_PREFIX"
 	llmISVCConfigGroup       = "serving.kserve.io"
 	llmISVCConfigKind        = "LLMInferenceServiceConfig"
+
+	// Template (ServingRuntime) resource type
+	templateGroup = "template.openshift.io"
+	templateKind  = "Template"
+
+	// Platform finalizer (inherited from ODH operator component reconciler)
+	PlatformFinalizerName = "platform.opendatahub.io/finalizer"
 
 	// cert-manager defaults
 	defaultCAIssuerName    = "opendatahub-ca-issuer"

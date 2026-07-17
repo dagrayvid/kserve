@@ -24,7 +24,11 @@ spec:
   - name: revision
     value: '{{revision}}'
   - name: output-image
-    value: quay.io/opendatahub/odh-kserve-module-operator:odh-stable
+    value: quay.io/opendatahub/odh-kserve-module-operator:odh-master
+  - name: additional-tags
+    value:
+    - 'odh-master'
+    - 'odh-master-{{revision}}'
   - name: dockerfile
     value: kserve-module-controller.Dockerfile
   - name: path-context
@@ -38,6 +42,15 @@ spec:
       value: main
     - name: pathInRepo
       value: pipeline/multi-arch-container-build.yaml
+  taskRunSpecs:
+    - pipelineTaskName: sast-shell-check
+      computeResources:
+        requests:
+          cpu: '2'
+          memory: 16Gi
+        limits:
+          cpu: '2'
+          memory: 16Gi
   taskRunTemplate:
     serviceAccountName: build-pipeline-odh-kserve-module-operator-ci
   workspaces:

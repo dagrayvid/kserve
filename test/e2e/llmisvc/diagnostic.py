@@ -19,11 +19,38 @@ from kubernetes import client, config, dynamic
 from kubernetes.client import api_client
 from typing import Callable, Optional
 
+import yaml
+from kserve import KServeClient, constants
+
 _log = logging.getLogger(__name__)
+
+LLMISVC_PART_OF = "llminferenceservice"
+KSERVE_PLURAL_LLMINFERENCESERVICE = "llminferenceservices"
+
+
+def llmisvc_labels(service_name: str) -> dict:
+    """Return the universal label selector for all resources owned by an LLMInferenceService."""
+    return {
+        "app.kubernetes.io/part-of": LLMISVC_PART_OF,
+        "app.kubernetes.io/name": service_name,
+    }
+
+
+def strip_managed_fields(d):
+    """Remove managed_fields from a K8s object dict to reduce log noise."""
+    if isinstance(d, dict):
+        d.pop("managed_fields", None)
+        metadata = d.get("metadata")
+        if isinstance(metadata, dict):
+            metadata.pop("managed_fields", None)
+    return d
 
 
 def print_all_events_table(
-    namespace: str, max_events: int = 50, log: Callable = _log.info
+    namespace: str,
+    max_events: int = 50,
+    log: Callable = _log.info,
+    log_prefix: str = "",
 ):
     """
     Emit the most recent `max_events` events in `namespace` as a nice table.
@@ -34,12 +61,12 @@ def print_all_events_table(
         events = core.list_namespaced_event(namespace=namespace).items
 
         if not events:
-            log("ℹ️ # No events found in namespace %s", namespace)
+            log(f"{log_prefix} ℹ️ # No events found in namespace %s", namespace)
             return
 
-        header = f"{'TIME':<25} {'NAMESPACE':<12} {'SOURCE':<20} {'TYPE':<8} {'REASON':<20} MESSAGE"
+        header = f"{log_prefix} {'TIME':<25} {'NAMESPACE':<12} {'SOURCE':<20} {'TYPE':<8} {'REASON':<20} MESSAGE"
         log(header)
-        log("-" * len(header))
+        log(f"{log_prefix}" + "-" * len(header))
 
         for ev in events:
             ts = ev.last_timestamp or ev.first_timestamp
@@ -51,7 +78,7 @@ def print_all_events_table(
             src = f"{ev.source.component or ''}/{ev.source.host or ''}".strip("/")
             msg = (ev.message or "").replace("\n", " ")
             log(
-                "%s %s %s %s %s %s",
+                f"{log_prefix} %s %s %s %s %s %s",
                 ts_str.ljust(25),
                 ev.metadata.namespace.ljust(12),
                 src.ljust(20),
@@ -61,7 +88,7 @@ def print_all_events_table(
             )
 
     except Exception as e:
-        log("# ❌ failed to list events: %s", e)
+        log(f"{log_prefix} # ❌ failed to list events: %s", e)
 
 
 def kinds_matching_by_labels(namespace: str, labels, skip_api_kinds=None):
@@ -199,3 +226,40 @@ def _emit_container_logs(
             log("%s", logs or "(empty)")
         except Exception as e:
             log("# -- logs (%s): unavailable (%s)", label, e)
+
+
+def collect_diagnostics(
+    service_name: str,
+    namespace: str,
+    kserve_client: Optional[KServeClient] = None,
+    log: Callable = _log.info,
+):
+    """
+    Collect full diagnostics for an LLMInferenceService: CR YAML, events,
+    pod logs (init + regular containers), and all labeled child resources.
+    """
+    labels = llmisvc_labels(service_name)
+
+    log("# Diagnostics for %r in %r", service_name, namespace)
+    log("---")
+
+    if kserve_client is not None:
+        log("# LLMInferenceService %s", service_name)
+        try:
+            svc = kserve_client.api_instance.get_namespaced_custom_object(
+                constants.KSERVE_GROUP,
+                constants.KSERVE_V1ALPHA1_VERSION,
+                namespace,
+                KSERVE_PLURAL_LLMINFERENCESERVICE,
+                service_name,
+            )
+            log(yaml.safe_dump(svc, sort_keys=False))
+        except Exception as e:
+            log("# failed to dump LLMInferenceService: %s", e)
+
+    print_all_events_table(namespace, log=log)
+    collect_pod_logs(namespace, labels, log=log)
+
+    for obj in kinds_matching_by_labels(namespace, labels):
+        log("---")
+        log(yaml.safe_dump(obj.to_dict(), sort_keys=False))

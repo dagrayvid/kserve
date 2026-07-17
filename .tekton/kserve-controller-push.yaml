@@ -23,7 +23,7 @@ spec:
   - name: revision
     value: '{{revision}}'
   - name: output-image
-    value: quay.io/opendatahub/kserve-controller:odh-stable
+    value: quay.io/opendatahub/kserve-controller:odh-master
   - name: dockerfile
     value: Dockerfile
   - name: path-context
@@ -33,7 +33,8 @@ spec:
     - "GOTAGS=distro"
   - name: additional-tags
     value:
-    - 'odh-stable'
+    - 'odh-master'
+    - 'odh-master-{{revision}}'
   pipelineRef:
     resolver: git
     params:
@@ -43,6 +44,15 @@ spec:
       value: main
     - name: pathInRepo
       value: pipeline/multi-arch-container-build.yaml
+  taskRunSpecs:
+    - pipelineTaskName: sast-shell-check
+      computeResources:
+        requests:
+          cpu: '2'
+          memory: 16Gi
+        limits:
+          cpu: '2'
+          memory: 16Gi
   taskRunTemplate:
     serviceAccountName: build-pipeline-kserve-controller
   workspaces:

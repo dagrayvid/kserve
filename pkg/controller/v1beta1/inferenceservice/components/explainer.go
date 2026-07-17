@@ -91,7 +91,7 @@ func (e *Explainer) Reconcile(ctx context.Context, isvc *v1beta1.InferenceServic
 	addLoggerAnnotations(isvc.Spec.Explainer.Logger, annotations)
 
 	explainerName := constants.ExplainerServiceName(isvc.Name)
-	predictorName := constants.PredictorServiceName(isvc.Name)
+	predictorName := constants.PredictorServiceName(isvc.Name, isvc.Spec.Predictor.Name)
 
 	// Labels and annotations from explainer component
 	// Label filter will be handled in ksvc_reconciler and raw reconciler
@@ -174,7 +174,7 @@ func (e *Explainer) reconcileExplainerRawDeployment(ctx context.Context, isvc *v
 
 	var storageContainerSpec *v1alpha1.StorageContainerSpec
 	if len(isvc.Spec.Explainer.StorageUris) > 0 {
-		storageContainerSpec, err = pod.GetStorageContainerSpec(ctx, isvc.Spec.Explainer.StorageUris[0].Uri, e.client)
+		storageContainerSpec, err = pod.GetStorageContainerSpec(ctx, isvc.Spec.Explainer.StorageUris[0].Uri, nil, e.client)
 		if err != nil {
 			return errors.Wrapf(err, "failed to get storage container spec")
 		}
@@ -232,7 +232,7 @@ func (e *Explainer) reconcileExplainerKnativeDeployment(ctx context.Context, isv
 
 	var storageContainerSpec *v1alpha1.StorageContainerSpec
 	if len(isvc.Spec.Explainer.StorageUris) > 0 {
-		storageContainerSpec, err = pod.GetStorageContainerSpec(ctx, isvc.Spec.Explainer.StorageUris[0].Uri, e.client)
+		storageContainerSpec, err = pod.GetStorageContainerSpec(ctx, isvc.Spec.Explainer.StorageUris[0].Uri, nil, e.client)
 		if err != nil {
 			return errors.Wrapf(err, "failed to get storage container spec")
 		}

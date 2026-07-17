@@ -41,7 +41,7 @@ import (
 // These permissions are needed to discover and monitor inference pools and pods.
 var sidecarSSRFProtectionRules = []rbacv1.PolicyRule{
 	{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get", "list", "watch"}},
-	{APIGroups: []string{"inference.networking.x-k8s.io"}, Resources: []string{"inferencepools"}, Verbs: []string{"get", "list", "watch"}},
+	{APIGroups: []string{"inference.networking.x-k8s.io", "inference.networking.k8s.io"}, Resources: []string{"inferencepools"}, Verbs: []string{"get", "list", "watch"}},
 }
 
 // reconcileWorkload manages the Deployments and Services for the LLM.
@@ -88,7 +88,7 @@ func (r *LLMISVCReconciler) reconcileWorkload(ctx context.Context, llmSvc *v1alp
 	}
 
 	// Create Service to expose workload pods
-	if err := r.reconcileWorkloadService(ctx, llmSvc); err != nil {
+	if err := r.reconcileWorkloadService(ctx, llmSvc, config); err != nil {
 		llmSvc.MarkMainWorkloadNotReady("ReconcileWorkloadServiceError", err.Error())
 		return fmt.Errorf("failed to reconcile workload service: %w", err)
 	}
@@ -109,7 +109,11 @@ func (r *LLMISVCReconciler) reconcileWorkload(ctx context.Context, llmSvc *v1alp
 	return nil
 }
 
-func (r *LLMISVCReconciler) reconcileWorkloadService(ctx context.Context, llmSvc *v1alpha2.LLMInferenceService) error {
+func (r *LLMISVCReconciler) reconcileWorkloadService(ctx context.Context, llmSvc *v1alpha2.LLMInferenceService, config *Config) error {
+	workloadServiceProtocol := "http"
+	if config != nil && config.EnableTLS {
+		workloadServiceProtocol = "https"
+	}
 	expected := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      workloadServiceName(llmSvc),
@@ -134,9 +138,9 @@ func (r *LLMISVCReconciler) reconcileWorkloadService(ctx context.Context, llmSvc
 			// "main receiver" port.
 			Ports: []corev1.ServicePort{
 				{
-					Name:        "https",
+					Name:        workloadServiceProtocol,
 					Protocol:    corev1.ProtocolTCP,
-					AppProtocol: ptr.To("https"),
+					AppProtocol: ptr.To(workloadServiceProtocol),
 					Port:        8000,
 					TargetPort: intstr.IntOrString{
 						Type:   intstr.Int,
@@ -150,7 +154,7 @@ func (r *LLMISVCReconciler) reconcileWorkloadService(ctx context.Context, llmSvc
 	}
 
 	utils.PropagateMap(llmSvc.Spec.Labels, &expected.Labels)
-	utils.PropagateMap(llmSvc.Spec.Annotations, &expected.Annotations)
+	utils.PropagateMap(llmSvc.Spec.Annotations, &expected.Annotations, AnnotationModelBasedRoutingEnabled)
 
 	if utils.GetForceStopRuntime(llmSvc) {
 		return Delete(ctx, r, llmSvc, expected)
@@ -166,7 +170,7 @@ func GetWorkloadLabelSelector(meta metav1.ObjectMeta, _ *v1alpha2.LLMInferenceSe
 		constants.KServeComponentLabelKey:   constants.KServeComponentWorkload,
 	}
 
-	// TODO https://github.com/llm-d/llm-d-inference-scheduler/issues/220 and DP template
+	// TODO https://github.com/llm-d/llm-d-router/issues/220 and DP template
 
 	return s
 }

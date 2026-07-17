@@ -21,6 +21,7 @@ from urllib.parse import urlparse
 from timeout_sampler import TimeoutSampler
 
 import portforward
+import requests
 from kubernetes import client as k8s_client
 from kubernetes.client.rest import ApiException
 from orjson import orjson
@@ -32,10 +33,13 @@ from kserve import constants
 from kserve.inference_client import InferenceGRPCClient, InferenceRESTClient
 from kserve.protocol.grpc import grpc_predict_v2_pb2 as pb
 from kserve.logging import trace_logger as logger
-from .http_retry import post_with_retry
+from .http_retry import DEFAULT_TIMEOUT_SECONDS, post_with_retry
 
 KSERVE_NAMESPACE = os.environ.get("KSERVE_NAMESPACE", "kserve")
 KSERVE_TEST_NAMESPACE = "kserve-ci-e2e-test"
+# autogluonserver: large image + storage init + predictor load often exceeds default
+# KServeClient.wait_isvc_ready (600s) under parallel e2e; override via env if needed.
+AUTOGLUON_ISVC_WAIT_TIMEOUT = int(os.getenv("AUTOGLUON_ISVC_WAIT_TIMEOUT", "1200"))
 MODEL_CLASS_NAME = "modelClass"
 INFERENCESERVICE_CONTAINER = "kserve-container"
 TRANSFORMER_CONTAINER = "transformer-container"
@@ -48,7 +52,11 @@ def grpc_client(host, cluster_ip):
     logger.info("Cluster IP: %s", cluster_ip)
     return InferenceGRPCClient(
         cluster_ip,
-        verbose=True,
+        verbose=False,
+        channel_args=[
+            ("grpc.ssl_target_name_override", host),
+        ],
+        timeout=120,
     )
 
 
@@ -60,6 +68,7 @@ async def predict_isvc(
     model_name=None,
     is_batch=False,
     network_layer: str = "istio",
+    extra_headers: dict = None,
 ) -> Union[InferResponse, Dict, List[Union[Dict, InferResponse]]]:
     kfs_client = KServeClient(
         config_file=os.environ.get("KUBECONFIG", "~/.kube/config")
@@ -81,6 +90,7 @@ async def predict_isvc(
         model_name=model_name,
         is_batch=is_batch,
         is_graph=False,
+        extra_headers=extra_headers,
     )
 
 
@@ -92,6 +102,7 @@ async def predict(
     model_name=None,
     is_batch=False,
     is_graph=False,
+    extra_headers: dict = None,
 ) -> Union[InferResponse, Dict, List[Union[Dict, InferResponse]]]:
     if isinstance(input, str):
         with open(input) as json_file:
@@ -99,6 +110,8 @@ async def predict(
     else:
         data = input
     headers = {"Host": host, "Content-Type": "application/json"}
+    if extra_headers:
+        headers.update(extra_headers)
     if is_batch:
         with futures.ThreadPoolExecutor(max_workers=4) as executor:
             loop = asyncio.get_running_loop()
@@ -418,6 +431,69 @@ def rerank(
     return _process_non_streaming_response(res)
 
 
+def classify(
+    service_name,
+    input_json,
+    version=constants.KSERVE_V1BETA1_VERSION,
+):
+    """Call vLLM's /classify endpoint for classification tasks"""
+    res = _vllm_request(service_name, input_json, version, "classify")
+    return _process_non_streaming_response(res)
+
+
+def _get_vllm_endpoint_and_host(
+    service_name, url_suffix, version=constants.KSERVE_V1BETA1_VERSION
+):
+    """
+    Get the vLLM endpoint for the given service name (without /openai prefix).
+    Args:
+        service_name: The name of the inference service
+        url_suffix: The suffix for the vLLM endpoint (e.g., "classify")
+        version: The version of the inference service. Defaults to v1beta1
+    Returns:
+        A tuple containing the vLLM endpoint URL and the host name
+    """
+    kfs_client = KServeClient(
+        config_file=os.environ.get("KUBECONFIG", "~/.kube/config")
+    )
+    isvc = kfs_client.get(
+        service_name, namespace=KSERVE_TEST_NAMESPACE, version=version
+    )
+    scheme, cluster_ip, host, path = get_isvc_endpoint(isvc)
+    return f"{scheme}://{cluster_ip}{path}/{url_suffix}", host
+
+
+def _vllm_request(
+    service_name,
+    input_json,
+    version=constants.KSERVE_V1BETA1_VERSION,
+    url_suffix="",
+):
+    """Make a request to vLLM's /classify endpoint"""
+    with open(input_json) as json_file:
+        data = json.load(json_file)
+
+        # If input is in v2 format, convert to vLLM classify endpoint format. Classify endpoint expects 'input' (not 'inputs') as a list of texts
+        if "inputs" in data and isinstance(data["inputs"], list):
+            text = data["inputs"][0]["data"][0]
+            data = {"input": [text]}
+
+        url, host = _get_vllm_endpoint_and_host(service_name, url_suffix, version)
+        headers = {"Host": host, "Content-Type": "application/json"}
+
+        logger.info("Sending Header = %s", headers)
+        logger.info("Sending url = %s", url)
+        logger.info("Sending request data: %s", data)
+
+        response = requests.post(
+            url, json.dumps(data), headers=headers, timeout=DEFAULT_TIMEOUT_SECONDS
+        )
+        logger.info("Got response code %s", response.status_code)
+        if not response.status_code == 200:
+            response.raise_for_status()
+        return response
+
+
 def _get_openai_endpoint_and_host(
     service_name,
     url_suffix,
@@ -441,7 +517,19 @@ def _get_openai_endpoint_and_host(
         service_name, namespace=KSERVE_TEST_NAMESPACE, version=version
     )
     scheme, cluster_ip, host, path = get_isvc_endpoint(isvc, network_layer)
-    return f"{scheme}://{cluster_ip}{path}/openai/{url_suffix}", host
+
+    # vLLM runtime does not use /openai prefix, others do
+    model_format = (
+        isvc.get("spec", {})
+        .get("predictor", {})
+        .get("model", {})
+        .get("modelFormat", {})
+        .get("name", "")
+    )
+    if model_format == "vLLM":
+        return f"{scheme}://{cluster_ip}{path}/{url_suffix}", host
+    else:
+        return f"{scheme}://{cluster_ip}{path}/openai/{url_suffix}", host
 
 
 def _openai_request(

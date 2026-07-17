@@ -1,15 +1,12 @@
 package kservemodule_test
 
 import (
-	"fmt"
-	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/opendatahub-io/odh-platform-utilities/api/common"
@@ -19,49 +16,6 @@ import (
 	"github.com/opendatahub-io/kserve-module/pkg/kservemodule"
 	"github.com/opendatahub-io/kserve-module/pkg/kservemodule/fixture"
 )
-
-// createMatchingCRD creates a CRD whose name matches the convention used by
-// CustomResourceDefinitionExists: lowercase(kind+"s").group
-func createMatchingCRD(ctx SpecContext, k8sClient client.Client, group, kind string) *apiextensionsv1.CustomResourceDefinition {
-	plural := strings.ToLower(kind) + "s"
-	crd := &apiextensionsv1.CustomResourceDefinition{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: fmt.Sprintf("%s.%s", plural, group),
-		},
-		Spec: apiextensionsv1.CustomResourceDefinitionSpec{
-			Group: group,
-			Versions: []apiextensionsv1.CustomResourceDefinitionVersion{{
-				Name: "v1", Served: true, Storage: true,
-				Schema: &apiextensionsv1.CustomResourceValidation{
-					OpenAPIV3Schema: &apiextensionsv1.JSONSchemaProps{
-						Type: "object",
-					},
-				},
-			}},
-			Scope: apiextensionsv1.NamespaceScoped,
-			Names: apiextensionsv1.CustomResourceDefinitionNames{
-				Plural:   plural,
-				Singular: strings.ToLower(kind),
-				Kind:     kind,
-			},
-		},
-	}
-
-	ExpectWithOffset(1, client.IgnoreAlreadyExists(k8sClient.Create(ctx, crd))).To(Succeed())
-
-	Eventually(func(g Gomega) {
-		var updated apiextensionsv1.CustomResourceDefinition
-		g.Expect(k8sClient.Get(ctx, types.NamespacedName{Name: crd.Name}, &updated)).To(Succeed())
-		for _, c := range updated.Status.Conditions {
-			if c.Type == apiextensionsv1.Established && c.Status == apiextensionsv1.ConditionTrue {
-				return
-			}
-		}
-		g.Expect(false).To(BeTrue(), "CRD %s not established", crd.Name)
-	}).WithContext(ctx).WithTimeout(30 * time.Second).Should(Succeed())
-
-	return crd
-}
 
 func refreshKserveStatus(ctx SpecContext, k8sClient client.Client, kserve *platformv1alpha1.Kserve) error {
 	return k8sClient.Get(ctx, client.ObjectKeyFromObject(kserve), kserve)
@@ -127,7 +81,7 @@ var _ = Describe("Dependency Integration", Ordered, func() {
 			{"networking.istio.io", "Gateway"},
 			{"security.istio.io", "AuthorizationPolicy"},
 		} {
-			crd := createMatchingCRD(ctx, testEnv.Client, dep.group, dep.kind)
+			crd := fixture.CreateCRD(ctx, testEnv.Client, dep.group, "v1", dep.kind, apiextensionsv1.NamespaceScoped)
 			testCRDs[crd.Name] = crd
 		}
 
@@ -148,9 +102,9 @@ var _ = Describe("Dependency Integration", Ordered, func() {
 		}).WithContext(ctx).WithTimeout(30 * time.Second).WithPolling(2 * time.Second).Should(Succeed())
 	})
 
-	It("sets Degraded=True with Info severity when critical CRDs exist but some optional CRDs are missing", func(ctx SpecContext) {
-		for _, gk := range criticalCRDs {
-			crd := createMatchingCRD(ctx, testEnv.Client, gk.Group, gk.Kind)
+	It("sets Degraded=False with Info severity when critical CRDs exist but some optional CRDs are missing", func(ctx SpecContext) {
+		for _, info := range criticalCRDs {
+			crd := fixture.CreateCRDByName(ctx, testEnv.Client, info.Name, info.Group, "v1", apiextensionsv1.NamespaceScoped)
 			testCRDs[crd.Name] = crd
 		}
 
@@ -166,14 +120,14 @@ var _ = Describe("Dependency Integration", Ordered, func() {
 
 			degradedCond := fixture.FindCondition(kserve, string(common.ConditionTypeDegraded))
 			g.Expect(degradedCond).NotTo(BeNil())
-			g.Expect(degradedCond.Status).To(Equal(metav1.ConditionTrue))
+			g.Expect(degradedCond.Status).To(Equal(metav1.ConditionFalse))
 			g.Expect(degradedCond.Severity).To(Equal(common.ConditionSeverityInfo))
 		}).WithContext(ctx).WithTimeout(30 * time.Second).WithPolling(2 * time.Second).Should(Succeed())
 	})
 
 	It("clears Degraded when all CRDs are present", func(ctx SpecContext) {
-		for _, gk := range kservemodule.XKSCRDDependenciesForTest() {
-			crd := createMatchingCRD(ctx, testEnv.Client, gk.Group, gk.Kind)
+		for _, info := range kservemodule.XKSCRDDependenciesForTest() {
+			crd := fixture.CreateCRDByName(ctx, testEnv.Client, info.Name, info.Group, "v1", apiextensionsv1.NamespaceScoped)
 			testCRDs[crd.Name] = crd
 		}
 

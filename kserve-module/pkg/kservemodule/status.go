@@ -6,6 +6,9 @@ import (
 	"slices"
 	"strings"
 
+	k8serr "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/opendatahub-io/odh-platform-utilities/api/common"
@@ -17,6 +20,8 @@ import (
 const (
 	ConditionKServeReady           = "KServeReady"
 	ConditionModelControllerReady  = "ModelControllerReady"
+	ConditionWVAReady              = "WVAReady"
+	ConditionModelCacheReady       = "ModelCacheReady"
 	ConditionDependenciesAvailable = "DependenciesAvailable"
 )
 
@@ -26,6 +31,8 @@ func newConditionManager(kserve *platformv1alpha1.Kserve) *conditions.Manager {
 		string(common.ConditionTypeProvisioningSucceeded),
 		ConditionKServeReady,
 		ConditionModelControllerReady,
+		ConditionWVAReady,
+		ConditionModelCacheReady,
 		ConditionDependenciesAvailable,
 	)
 }
@@ -45,7 +52,7 @@ func applyDependencyConditions(condMgr *conditions.Manager, result dependencyRes
 	} else if len(result.degradedReasons) > 0 {
 		condMgr.MarkTrue(ConditionDependenciesAvailable,
 			conditions.WithReason("AllCriticalDependenciesMet"))
-		condMgr.MarkTrue(string(common.ConditionTypeDegraded),
+		condMgr.MarkFalse(string(common.ConditionTypeDegraded),
 			conditions.WithSeverity(common.ConditionSeverityInfo),
 			conditions.WithReason("MissingOptionalDependency"),
 			conditions.WithMessage("%s", strings.Join(result.degradedReasons, "; ")))
@@ -88,7 +95,7 @@ func applyProvisioningCondition(condMgr *conditions.Manager, componentErrors map
 		conditions.WithMessage("%s", strings.Join(msgs, "; ")))
 }
 
-func (r *KserveModuleReconciler) updateComponentReadiness(ctx context.Context, condMgr *conditions.Manager) {
+func (r *KserveModuleReconciler) updateComponentReadiness(ctx context.Context, kserve *platformv1alpha1.Kserve, condMgr *conditions.Manager) {
 	ns := r.getApplicationsNamespace()
 	isXKS := r.isKubernetes(ctx)
 
@@ -109,39 +116,76 @@ func (r *KserveModuleReconciler) updateComponentReadiness(ctx context.Context, c
 		condMgr.MarkTrue(ConditionModelControllerReady,
 			conditions.WithReason("AllDeploymentsAvailable"))
 	}
+
+	if isWVAEnabled(kserve) {
+		if err := checkWVAReadiness(ctx, r.Client, ns); err != nil {
+			condMgr.MarkFalse(ConditionWVAReady,
+				conditions.WithReason("DeploymentNotReady"),
+				conditions.WithMessage("%s", err.Error()))
+		} else {
+			condMgr.MarkTrue(ConditionWVAReady,
+				conditions.WithReason("AllDeploymentsAvailable"))
+		}
+	} else {
+		condMgr.ClearCondition(ConditionWVAReady)
+	}
+
+	if !isModelCacheEnabled(kserve) {
+		condMgr.ClearCondition(ConditionModelCacheReady)
+	} else if err := r.checkModelCacheReadiness(ctx); err != nil {
+		condMgr.MarkFalse(ConditionModelCacheReady,
+			conditions.WithReason(modelCacheReadinessReason(err)),
+			conditions.WithMessage("%s", err.Error()))
+	} else {
+		condMgr.MarkTrue(ConditionModelCacheReady,
+			conditions.WithReason("ResourcesReady"))
+	}
 }
 
 func (r *KserveModuleReconciler) updateStatus(ctx context.Context, kserve *platformv1alpha1.Kserve, condMgr *conditions.Manager) error {
-	log := ctrl.LoggerFrom(ctx)
-
-	r.setReleaseStatus(kserve)
-
+	r.setReleaseStatus(ctx, kserve)
 	condMgr.Sort()
-	kserve.Status.ObservedGeneration = kserve.Generation
 
 	if condMgr.IsHappy() {
 		kserve.Status.Phase = common.PhaseReady
+		for i := range kserve.Status.Conditions {
+			if kserve.Status.Conditions[i].Type == string(common.ConditionTypeReady) {
+				kserve.Status.Conditions[i].Reason = ""
+				break
+			}
+		}
 	} else {
 		kserve.Status.Phase = common.PhaseNotReady
 	}
 
-	if err := r.Status().Update(ctx, kserve); err != nil {
-		log.Error(err, "failed to update status")
-		return err
-	}
-	return nil
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		latest := &platformv1alpha1.Kserve{}
+		if err := r.Get(ctx, types.NamespacedName{Name: kserve.Name}, latest); err != nil {
+			if k8serr.IsNotFound(err) {
+				ctrl.LoggerFrom(ctx).Info("CR deleted, skipping status update")
+				return nil
+			}
+			return err
+		}
+		latest.Status = kserve.Status
+		latest.Status.ObservedGeneration = kserve.Generation
+		return r.Status().Update(ctx, latest)
+	})
 }
 
-func (r *KserveModuleReconciler) setReleaseStatus(kserve *platformv1alpha1.Kserve) {
-	if len(kserve.Status.Releases) > 0 {
-		return
-	}
-
+func (r *KserveModuleReconciler) setReleaseStatus(ctx context.Context, kserve *platformv1alpha1.Kserve) {
 	releases, err := loadComponentReleases(r.ManifestsTemplatePath,
-		[]string{kserveComponentName, odhModelControllerComponentName})
+		[]string{KserveComponentName, OdhModelControllerComponentName})
 	if err != nil {
 		ctrl.Log.Error(err, "failed to load component releases")
 		return
+	}
+
+	if v := r.getPlatformVersion(ctx); v != "" {
+		releases = append(releases, common.ComponentRelease{
+			Name:    "platform",
+			Version: v,
+		})
 	}
 
 	kserve.SetReleaseStatus(common.ComponentReleaseStatus{Releases: releases})
