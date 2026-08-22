@@ -217,13 +217,7 @@ func (r *LLMISVCReconciler) attachLoRAAdapters(
 }
 
 func userSuppliedLoRAConfig(c *corev1.Container) bool {
-	for _, e := range c.Env {
-		if e.Name == "VLLM_ADDITIONAL_ARGS" && strings.Contains(e.Value, "--lora-modules") {
-			return true
-		}
-	}
-	joined := strings.Join(c.Command, " ") + " " + strings.Join(c.Args, " ")
-	return strings.Contains(joined, "--lora-modules")
+	return hasVLLMArg(c, "--lora-modules")
 }
 
 // hasValueFromLoRAConfig reports whether VLLM_ADDITIONAL_ARGS is set via valueFrom

@@ -19,6 +19,7 @@ package llmisvc
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -210,6 +211,18 @@ func routingSidecar(pod *corev1.PodSpec) *corev1.Container {
 		}
 	}
 	return nil
+}
+
+// hasVLLMArg reports whether a vLLM flag is already set via VLLM_ADDITIONAL_ARGS
+// env var or container command/args.
+func hasVLLMArg(c *corev1.Container, flag string) bool {
+	for _, e := range c.Env {
+		if e.Name == "VLLM_ADDITIONAL_ARGS" && strings.Contains(e.Value, flag) {
+			return true
+		}
+	}
+	joined := strings.Join(c.Command, " ") + " " + strings.Join(c.Args, " ")
+	return strings.Contains(joined, flag)
 }
 
 // PreserveDeploymentReplicas returns an UpdateOption that preserves the current
