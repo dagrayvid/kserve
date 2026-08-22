@@ -57,6 +57,10 @@ const AnnotationInferencePoolMigrated = "serving.kserve.io/inference-pool-migrat
 
 const AnnotationModelBasedRoutingEnabled = "serving.kserve.io/model-based-routing-enabled"
 
+// AnnotationInjectRootPath controls whether the controller injects --root-path
+// into the vLLM container. Enabled by default; set to "false" to disable.
+const AnnotationInjectRootPath = "serving.kserve.io/inject-root-path"
+
 // ErrPreconditionNotMet is a sentinel error returned by ensureGatewayPreconditions
 // when a non-transient precondition is not met (e.g. a required CRD is missing).
 // The caller should mark status but not propagate the error to avoid infinite requeue.

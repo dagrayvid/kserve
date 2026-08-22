@@ -191,6 +191,10 @@ func (r *LLMISVCReconciler) expectedSingleNodeMainDeployment(ctx context.Context
 		}
 	}
 
+	if llmSvc.Spec.Router != nil && llmSvc.Spec.Annotations[AnnotationInjectRootPath] != "false" {
+		injectRootPath(llmSvc, &d.Spec.Template.Spec)
+	}
+
 	log.FromContext(ctx).V(2).Info("Expected main deployment", "deployment", d)
 
 	return d, nil
@@ -534,4 +538,14 @@ func applyDeploymentRolloutStrategy(d *appsv1.Deployment, workload *v1alpha2.Wor
 			MaxSurge:       rs.MaxSurge,
 		},
 	}
+}
+
+// injectRootPath sets --root-path on the main container so vLLM's /docs page
+// references the correct per-participant gateway prefix (/<namespace>/<name>).
+func injectRootPath(llmSvc *v1alpha2.LLMInferenceService, podSpec *corev1.PodSpec) {
+	main := utils.GetContainerWithName(podSpec, "main")
+	if main == nil || hasVLLMArg(main, "--root-path") || hasVLLMArg(main, "--root_path") {
+		return
+	}
+	main.Args = append(main.Args, "--root-path", "/"+llmSvc.Namespace+"/"+llmSvc.Name)
 }
