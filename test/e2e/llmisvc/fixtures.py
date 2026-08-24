@@ -1805,13 +1805,17 @@ def _setup_test_case_service(
         _create_or_update_llmisvc_config(kserve_client, unique_config_body, namespace)
         created_configs.append(unique_config_name)
 
+    annotations = dict(DEFAULT_LLMISVC_ANNOTATIONS)
+    if any(ref.startswith("workload-llmd-simulator") for ref in tc.base_refs):
+        annotations.setdefault("serving.kserve.io/inject-root-path", "false")
+
     tc.llm_service = V1alpha1LLMInferenceService(
         api_version="serving.kserve.io/v1alpha1",
         kind="LLMInferenceService",
         metadata=client.V1ObjectMeta(
             name=tc.service_name,
             namespace=namespace,
-            annotations=dict(DEFAULT_LLMISVC_ANNOTATIONS) or None,
+            annotations=annotations or None,
         ),
         spec={
             "baseRefs": [{"name": base_ref} for base_ref in unique_base_refs],

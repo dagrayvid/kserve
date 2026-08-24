@@ -225,6 +225,16 @@ func hasVLLMArg(c *corev1.Container, flag string) bool {
 	return strings.Contains(joined, flag)
 }
 
+// injectRootPath sets --root-path on the main container so /docs works behind
+// the gateway's per-participant prefix (/<namespace>/<name>).
+func injectRootPath(llmSvc *v1alpha2.LLMInferenceService, podSpec *corev1.PodSpec) {
+	main := utils.GetContainerWithName(podSpec, "main")
+	if main == nil || hasVLLMArg(main, "--root-path") || hasVLLMArg(main, "--root_path") {
+		return
+	}
+	main.Args = append(main.Args, "--root-path", "/"+llmSvc.Namespace+"/"+llmSvc.Name)
+}
+
 // PreserveDeploymentReplicas returns an UpdateOption that preserves the current
 // Deployment's replica count when the owner doesn't explicitly set it.
 // This allows external controllers (like HPA) to manage replicas without the

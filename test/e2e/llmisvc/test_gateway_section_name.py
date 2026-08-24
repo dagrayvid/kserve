@@ -173,7 +173,11 @@ def test_gateway_section_name_propagation(
         llm_service = V1alpha1LLMInferenceService(
             api_version="serving.kserve.io/v1alpha1",
             kind="LLMInferenceService",
-            metadata=client.V1ObjectMeta(name=service_name, namespace=test_namespace),
+            metadata=client.V1ObjectMeta(
+                name=service_name,
+                namespace=test_namespace,
+                annotations={"serving.kserve.io/inject-root-path": "false"},
+            ),
             spec={"baseRefs": [{"name": ref} for ref in created_config_names]},
         )
 

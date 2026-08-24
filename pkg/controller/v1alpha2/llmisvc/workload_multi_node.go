@@ -277,6 +277,13 @@ func (r *LLMISVCReconciler) expectedMainMultiNodeLWS(ctx context.Context, llmSvc
 		injectServerTracingIntoPodSpec(llmSvc.Spec.Tracing, llmSvc.GetNamespace(), llmSvc.GetName(), "-decode", &expected.Spec.LeaderWorkerTemplate.WorkerTemplate.Spec)
 	}
 
+	if llmSvc.Spec.Router != nil && llmSvc.GetAnnotations()[AnnotationInjectRootPath] != "false" {
+		if expected.Spec.LeaderWorkerTemplate.LeaderTemplate != nil {
+			injectRootPath(llmSvc, &expected.Spec.LeaderWorkerTemplate.LeaderTemplate.Spec)
+		}
+		injectRootPath(llmSvc, &expected.Spec.LeaderWorkerTemplate.WorkerTemplate.Spec)
+	}
+
 	log.FromContext(ctx).V(2).Info("Expected main LWS", "leaderworkerset", expected)
 
 	return expected, nil
@@ -391,6 +398,13 @@ func (r *LLMISVCReconciler) expectedPrefillMultiNodeLWS(ctx context.Context, llm
 			injectServerTracingIntoPodSpec(llmSvc.Spec.Tracing, llmSvc.GetNamespace(), llmSvc.GetName(), "-prefill", &expected.Spec.LeaderWorkerTemplate.LeaderTemplate.Spec)
 		}
 		injectServerTracingIntoPodSpec(llmSvc.Spec.Tracing, llmSvc.GetNamespace(), llmSvc.GetName(), "-prefill", &expected.Spec.LeaderWorkerTemplate.WorkerTemplate.Spec)
+	}
+
+	if llmSvc.Spec.Router != nil && llmSvc.GetAnnotations()[AnnotationInjectRootPath] != "false" {
+		if expected.Spec.LeaderWorkerTemplate.LeaderTemplate != nil {
+			injectRootPath(llmSvc, &expected.Spec.LeaderWorkerTemplate.LeaderTemplate.Spec)
+		}
+		injectRootPath(llmSvc, &expected.Spec.LeaderWorkerTemplate.WorkerTemplate.Spec)
 	}
 
 	if llmSvc.Spec.Prefill != nil {

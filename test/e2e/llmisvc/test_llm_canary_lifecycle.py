@@ -137,13 +137,15 @@ DIV_MODEL_V2 = "model-beta"
 
 def apply_divergence_member(api, name, model_name, weight, ns):
     """Deploy a member for divergence tests (service backend, no scheduler)."""
+    annotations = dict(DEFAULT_LLMISVC_ANNOTATIONS)
+    annotations.setdefault("serving.kserve.io/inject-root-path", "false")
     body = V1alpha2LLMInferenceService(
         api_version=f"{KSERVE_GROUP}/{KSERVE_VERSION}",
         kind="LLMInferenceService",
         metadata=k8s_client.V1ObjectMeta(
             name=name,
             namespace=ns,
-            annotations=dict(DEFAULT_LLMISVC_ANNOTATIONS) or None,
+            annotations=annotations or None,
         ),
         spec={
             "model": {"name": model_name, "uri": MODEL_URI},
@@ -264,13 +266,15 @@ def apply_member(api, member: MemberSpec, ns):
     if member.scheduler:
         spec["router"]["scheduler"] = {}
 
+    annotations = dict(DEFAULT_LLMISVC_ANNOTATIONS)
+    annotations.setdefault("serving.kserve.io/inject-root-path", "false")
     body = V1alpha2LLMInferenceService(
         api_version=f"{KSERVE_GROUP}/{KSERVE_VERSION}",
         kind="LLMInferenceService",
         metadata=k8s_client.V1ObjectMeta(
             name=member.name,
             namespace=ns,
-            annotations=dict(DEFAULT_LLMISVC_ANNOTATIONS) or None,
+            annotations=annotations or None,
         ),
         spec=spec,
     )
